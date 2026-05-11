@@ -32,15 +32,17 @@ function writeSse(res: Response, payload: unknown): void {
  * 组装 SDK 子进程使用的环境变量。Provider 无关——base URL 与 token 由调用方传入。
  *
  * 关键(踩坑):
- *  - ANTHROPIC_API_KEY 必须显式设为空字符串,不能不设也不能 null;否则 SDK
- *    可能从其他来源(如本机 ~/.claude 配置)拿到一个 key 去走 Anthropic 官方。
- *  - 同时设置 ANTHROPIC_DEFAULT_HAIKU_MODEL / _SONNET_MODEL / _OPUS_MODEL,
- *    覆盖 SDK 内部按 tier 路由时可能出现的 fallback。
+ *  - 必须把 process.env 透传进去:SDK 会把这个对象直接作为 spawn 的 env,
+ *    Node 语义是"传了 env 就完全替换",不传 PATH/HOME 子进程会立刻退出
+ *    (现象是 SDK 报 "Claude Code native binary not found",误导)。
+ *  - ANTHROPIC_API_KEY 显式置空,覆盖宿主可能存在的同名变量,避免 SDK 走错 provider。
+ *  - 同时设置 ANTHROPIC_DEFAULT_*_MODEL,覆盖 SDK 内部按 tier 路由时可能出现的 fallback。
  */
 export function buildSdkEnv(req: ReviewRequest): Record<string, string> {
   const model = req.model;
   const small = req.smallModel || req.model;
   return {
+    ...(process.env as Record<string, string>),
     ANTHROPIC_BASE_URL: req.baseUrl,
     ANTHROPIC_AUTH_TOKEN: req.authToken,
     ANTHROPIC_API_KEY: "",
@@ -89,10 +91,13 @@ export async function runReview(req: ReviewRequest, res: Response, reqId: string
     res.write(`event: done\ndata: ok\n\n`);
     res.end();
   } catch (err) {
-    console.error(`${tag} runReview caught error after ${count} msgs:`, err);
+    // 把所有 own enumerable 字段(SDK 常带 code/exitCode/signal/stderr)都打出来
+    const extra = err && typeof err === "object" ? Object.fromEntries(Object.entries(err as object)) : undefined;
+    console.error(`${tag} runReview caught error after ${count} msgs:`, err, extra ? `extra=${JSON.stringify(extra)}` : "");
     const errPayload = {
       message: err instanceof Error ? err.message : String(err),
       stack: err instanceof Error ? err.stack : undefined,
+      extra,
     };
     if (!res.writableEnded) {
       res.write(`event: error\ndata: ${JSON.stringify(errPayload)}\n\n`);
