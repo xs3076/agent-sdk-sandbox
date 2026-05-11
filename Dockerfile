@@ -24,8 +24,15 @@ COPY skills/ ./skills/
 # 编译
 RUN npm run build
 
-# 工作目录(克隆的仓库放这里)
-RUN mkdir -p /workspace
+# 创建非 root 用户运行。
+# claude CLI 拒绝以 root 使用 --dangerously-skip-permissions,SDK 的
+# permissionMode: "bypassPermissions" 会立刻 exit 非零,被 SDK 误报为
+# "Claude Code native binary not found"。必须切非 root。
+# uid 1000 与常见宿主机首个普通用户对齐,bind mount 时权限更顺。
+RUN useradd -m -u 1000 -s /bin/bash app \
+    && mkdir -p /workspace \
+    && chown -R app:app /workspace /app
+USER app
 
 EXPOSE 3000
 CMD ["node", "dist/server.js"]
