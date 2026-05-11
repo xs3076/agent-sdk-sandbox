@@ -44,23 +44,46 @@ app.post("/agent/review", async (req: Request, res: Response) => {
   res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders();
 
+  // 立即写一个 SSE comment 帧"破冰",让客户端马上收到字节,
+  // 避免 SDK 冷启动几秒内空等导致 curl/Apifox/中间 NAT 主动关连接。
+  res.write(`: connected\n\n`);
+
+  // 心跳:每 15 秒一个 comment 帧,防 idle 超时;writable 关闭后自动停。
+  const heartbeat = setInterval(() => {
+    if (res.writableEnded) {
+      clearInterval(heartbeat);
+      return;
+    }
+    res.write(`: keepalive\n\n`);
+  }, 15000);
+
+  // SDK 文档(sdk.d.ts L1158)推荐的中止方式:客户端断连时 abort,
+  // SDK 会停止迭代并清理子进程,不再烧 token。
+  const abortController = new AbortController();
+
   res.on("finish", () => console.log(`[req ${reqId}] response finished`));
-  res.on("close", () => console.log(`[req ${reqId}] response closed (writableEnded=${res.writableEnded})`));
+  res.on("close", () => {
+    clearInterval(heartbeat);
+    console.log(`[req ${reqId}] response closed (writableEnded=${res.writableEnded})`);
+  });
   req.on("close", () => {
     if (!res.writableEnded) {
-      console.warn(`[req ${reqId}] client disconnected before response end`);
+      console.warn(`[req ${reqId}] client disconnected before response end -> abort SDK`);
+      abortController.abort();
       res.end();
     }
   });
 
   try {
-    await runReview(body as ReviewRequest, res, reqId);
+    await runReview(body as ReviewRequest, res, reqId, abortController);
   } catch (err) {
     // 防御:runReview 内部已 catch,这里兜底极端场景(如 SSE 写入失败)
     console.error(`[req ${reqId}] runReview threw out:`, err);
     if (!res.writableEnded) {
       res.end();
     }
+  } finally {
+    clearInterval(heartbeat);
   }
 });
 
