@@ -10,6 +10,11 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install
 
+# Claude Agent SDK 在运行时 spawn `claude` CLI 子进程,
+# 必须显式安装,否则报 "Claude Code native binary not found"
+RUN npm install -g @anthropic-ai/claude-code \
+    && which claude && claude --version
+
 # 复制全部源码(包含 scripts/ 测试用)
 COPY tsconfig.json ./
 COPY src/ ./src/

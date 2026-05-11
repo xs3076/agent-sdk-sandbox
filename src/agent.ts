@@ -70,6 +70,10 @@ export async function runReview(req: ReviewRequest, res: Response, reqId: string
         maxTurns: 50,
         settingSources: ["project"],
         env: buildSdkEnv(req),
+        // 显式指定 Claude Code CLI 路径,绕开 SDK 的 native binary 自动探测
+        // (node:20-slim 上探测会错误地找 musl 版本)。
+        // 由 Dockerfile `npm install -g @anthropic-ai/claude-code` 安装。
+        pathToClaudeCodeExecutable: process.env.CLAUDE_CODE_BIN || "/usr/local/bin/claude",
       },
     });
     console.log(`${tag} sdk query() returned, awaiting first message...`);
