@@ -7,7 +7,7 @@ on:
 
 env:
   REGISTRY: registry.cn-shanghai.aliyuncs.com
-  IMAGE_NAME: vagent/code-review-agent
+  IMAGE_NAME: vagent/agent-sdk-sandbox
 
 jobs:
   build:
