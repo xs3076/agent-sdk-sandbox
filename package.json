@@ -1,0 +1,24 @@
+{
+  "name": "code-review-agent",
+  "version": "1.0.0",
+  "description": "代码评审 Node Agent 服务 - 唯一调用 Claude Agent SDK 的地方",
+  "main": "dist/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit",
+    "test:sdk": "tsx scripts/test-sdk.ts"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "@anthropic-ai/claude-agent-sdk": "latest"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "tsx": "^4.19.0",
+    "@types/node": "^20.0.0",
+    "@types/express": "^4.17.0"
+  }
+}
