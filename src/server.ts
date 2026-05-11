@@ -27,11 +27,16 @@ app.get("/agent/health", (_req: Request, res: Response) => {
 app.post("/agent/review", async (req: Request, res: Response) => {
   const reqId = Math.random().toString(36).slice(2, 8);
   const body = req.body as Partial<ReviewRequest>;
+  const t0 = Date.now();
+  const dt = (): string => `+${Date.now() - t0}ms`;
+  // 把对端 socket 信息打出来,方便区分"容器内 curl / 宿主机 curl / 上游网关"。
+  const peer = `${req.socket.remoteAddress ?? "?"}:${req.socket.remotePort ?? "?"}`;
+  const ua = req.headers["user-agent"] ?? "-";
 
-  console.log(`[req ${reqId}] POST /agent/review workDir=${body.workDir} model=${body.model} sessionId=${body.sessionId ?? "-"}`);
+  console.log(`[req ${reqId}] ${dt()} POST /agent/review peer=${peer} ua=${ua} workDir=${body.workDir} model=${body.model} sessionId=${body.sessionId ?? "-"}`);
 
   if (!body.workDir || !body.prompt || !body.baseUrl || !body.authToken || !body.model) {
-    console.warn(`[req ${reqId}] 400 missing_required_field`);
+    console.warn(`[req ${reqId}] ${dt()} 400 missing_required_field`);
     res.status(400).json({
       error: "missing_required_field",
       message: "workDir / prompt / baseUrl / authToken / model 必填",
@@ -44,10 +49,14 @@ app.post("/agent/review", async (req: Request, res: Response) => {
   res.setHeader("Connection", "keep-alive");
   res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders();
+  console.log(`[req ${reqId}] ${dt()} headers flushed`);
 
   // 立即写一个 SSE comment 帧"破冰",让客户端马上收到字节,
   // 避免 SDK 冷启动几秒内空等导致 curl/Apifox/中间 NAT 主动关连接。
-  res.write(`: connected\n\n`);
+  // write() 同步返回 false 表示内核写缓冲已满,需要等 drain——一般 SSE 不会撞到,
+  // 但打出来便于反推"首字节根本没发出去"这种诡异场景。
+  const wroteIce = res.write(`: connected\n\n`);
+  console.log(`[req ${reqId}] ${dt()} : connected frame written (drained=${wroteIce})`);
 
   // 心跳:每 15 秒一个 comment 帧,防 idle 超时;writable 关闭后自动停。
   const heartbeat = setInterval(() => {
@@ -62,14 +71,25 @@ app.post("/agent/review", async (req: Request, res: Response) => {
   // SDK 会停止迭代并清理子进程,不再烧 token。
   const abortController = new AbortController();
 
-  res.on("finish", () => console.log(`[req ${reqId}] response finished`));
+  res.on("finish", () => console.log(`[req ${reqId}] ${dt()} response finished`));
   res.on("close", () => {
     clearInterval(heartbeat);
-    console.log(`[req ${reqId}] response closed (writableEnded=${res.writableEnded})`);
+    console.log(`[req ${reqId}] ${dt()} response closed (writableEnded=${res.writableEnded})`);
   });
   req.on("close", () => {
+    // 把 socket 是否已 destroyed、是否 aborted 一并打出来——能区分客户端 FIN/RST
+    // 主动关 vs Node 内部把 req 关掉,定位时区别巨大。
+    const sock = req.socket;
+    console.warn(
+      `[req ${reqId}] ${dt()} req close fired ` +
+        `writableEnded=${res.writableEnded} ` +
+        `aborted=${(req as { aborted?: boolean }).aborted ?? "?"} ` +
+        `socket.destroyed=${sock?.destroyed ?? "?"} ` +
+        `bytesWritten=${sock?.bytesWritten ?? "?"} ` +
+        `bytesRead=${sock?.bytesRead ?? "?"}`,
+    );
     if (!res.writableEnded) {
-      console.warn(`[req ${reqId}] client disconnected before response end -> abort SDK`);
+      console.warn(`[req ${reqId}] ${dt()} client disconnected before response end -> abort SDK`);
       abortController.abort();
       res.end();
     }
@@ -79,7 +99,7 @@ app.post("/agent/review", async (req: Request, res: Response) => {
     await runReview(body as ReviewRequest, res, reqId, abortController);
   } catch (err) {
     // 防御:runReview 内部已 catch,这里兜底极端场景(如 SSE 写入失败)
-    console.error(`[req ${reqId}] runReview threw out:`, err);
+    console.error(`[req ${reqId}] ${dt()} runReview threw out:`, err);
     if (!res.writableEnded) {
       res.end();
     }

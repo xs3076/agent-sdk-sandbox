@@ -72,7 +72,9 @@ export async function runReview(
   abortController: AbortController,
 ): Promise<void> {
   const tag = `[req ${reqId}]`;
-  console.log(`${tag} runReview start cwd=${req.workDir} baseUrl=${req.baseUrl}`);
+  const t0 = Date.now();
+  const dt = (): string => `+${Date.now() - t0}ms`;
+  console.log(`${tag} ${dt()} runReview start cwd=${req.workDir} baseUrl=${req.baseUrl}`);
   let count = 0;
   try {
     const result = query({
@@ -91,12 +93,12 @@ export async function runReview(
         stderr: (data: string) => console.error(`${tag} [sdk-stderr] ${data.trimEnd()}`),
       },
     });
-    console.log(`${tag} sdk query() returned, awaiting first message...`);
+    console.log(`${tag} ${dt()} sdk query() returned, awaiting first message...`);
 
     for await (const message of result) {
       count++;
       const m = message as { type?: string; subtype?: string };
-      console.log(`${tag} msg #${count} type=${m.type ?? "?"} subtype=${m.subtype ?? "-"}`);
+      console.log(`${tag} ${dt()} msg #${count} type=${m.type ?? "?"} subtype=${m.subtype ?? "-"}`);
       if (res.writableEnded) {
         // 客户端早断了,不再写入(避免 EPIPE),但循环跑完让 SDK 自然清理
         continue;
@@ -104,14 +106,14 @@ export async function runReview(
       writeSse(res, message);
     }
 
-    console.log(`${tag} sdk stream ended normally, total=${count}`);
+    console.log(`${tag} ${dt()} sdk stream ended normally, total=${count}`);
     if (!res.writableEnded) {
       res.write(`event: done\ndata: ok\n\n`);
       res.end();
     }
   } catch (err) {
     const extra = err && typeof err === "object" ? Object.fromEntries(Object.entries(err as object)) : undefined;
-    console.error(`${tag} runReview caught error after ${count} msgs:`, err, extra ? `extra=${JSON.stringify(extra)}` : "");
+    console.error(`${tag} ${dt()} runReview caught error after ${count} msgs:`, err, extra ? `extra=${JSON.stringify(extra)}` : "");
     const errPayload = {
       message: err instanceof Error ? err.message : String(err),
       stack: err instanceof Error ? err.stack : undefined,
