@@ -54,14 +54,11 @@ export function buildSdkEnv(req: ReviewRequest): Record<string, string> {
 
 /**
  * 调用 Claude Agent SDK 进行代码评审,流式把 SDKMessage 推到 SSE 响应。
- *
- * 设计要点:
- * 1. Provider 通过环境变量接入,Key 来自请求 body(避免镜像层泄漏)。
- * 2. 多轮对话靠 SDK 的 resume 参数,不在调用方拼历史。
- * 3. settingSources: ["project"] 让 SDK 读取仓库内的 .claude/skills。
- * 4. maxTurns 50 防止 agent 失控烧钱。
  */
-export async function runReview(req: ReviewRequest, res: Response): Promise<void> {
+export async function runReview(req: ReviewRequest, res: Response, reqId: string): Promise<void> {
+  const tag = `[req ${reqId}]`;
+  console.log(`${tag} runReview start cwd=${req.workDir} baseUrl=${req.baseUrl}`);
+  let count = 0;
   try {
     const result = query({
       prompt: req.prompt,
@@ -75,22 +72,27 @@ export async function runReview(req: ReviewRequest, res: Response): Promise<void
         env: buildSdkEnv(req),
       },
     });
+    console.log(`${tag} sdk query() returned, awaiting first message...`);
 
-    // 流式消费 SDK 输出,每条消息原样转成一行 SSE 推送。
     for await (const message of result) {
+      count++;
+      const m = message as { type?: string; subtype?: string };
+      console.log(`${tag} msg #${count} type=${m.type ?? "?"} subtype=${m.subtype ?? "-"}`);
       writeSse(res, message);
     }
 
-    // 正常结束时发送 done 事件(供上游识别流末尾)。
+    console.log(`${tag} sdk stream ended normally, total=${count}`);
     res.write(`event: done\ndata: ok\n\n`);
     res.end();
   } catch (err) {
-    // 异常通过 SSE 的 event: error 推到上游(设计文档要求 #8)。
+    console.error(`${tag} runReview caught error after ${count} msgs:`, err);
     const errPayload = {
       message: err instanceof Error ? err.message : String(err),
       stack: err instanceof Error ? err.stack : undefined,
     };
-    res.write(`event: error\ndata: ${JSON.stringify(errPayload)}\n\n`);
-    res.end();
+    if (!res.writableEnded) {
+      res.write(`event: error\ndata: ${JSON.stringify(errPayload)}\n\n`);
+      res.end();
+    }
   }
 }
