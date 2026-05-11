@@ -1,0 +1,59 @@
+services:
+  agent:
+    # 镜像由 GitHub Actions 自动构建并推送(.github/workflows/deploy.yml)
+    # 部署机直接 pull,不在本地 build
+    image: ${IMAGE:-registry.cn-shanghai.aliyuncs.com/vagent/code-review-agent}:${IMAGE_TAG:-latest}
+    container_name: code-review-agent
+    restart: unless-stopped
+
+    # 端口与时区可调；其余 Provider 配置走请求体,不在这里注入
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: ${PORT:-3000}
+      TZ: ${TZ:-Asia/Shanghai}
+
+    ports:
+      # 宿主机端口可改,容器内端口跟随 PORT 变量
+      - "${HOST_PORT:-3000}:${PORT:-3000}"
+
+    # 克隆的仓库放宿主机目录,方便排错与跨容器复用缓存
+    # 容器内路径必须是 /workspace —— 与 Dockerfile 一致
+    volumes:
+      - ${WORKSPACE_DIR:-./workspace}:/workspace
+
+    # 健康检查走业务真实路径,Spring Boot 上游也是轮询这个
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "node -e \"require('http').get('http://127.0.0.1:'+process.env.PORT+'/agent/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""
+      interval: 15s
+      timeout: 3s
+      retries: 4
+      start_period: 10s
+
+    # SSE 是长连接,优雅停机给足时间把在途流收尾
+    stop_grace_period: 30s
+    stop_signal: SIGTERM
+    init: true
+
+    # 防止 npm/git 子进程把宿主机 fd 用爆
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+    # 资源上限按需调整;maxTurns=50 + Claude 子进程,内存留宽
+    deploy:
+      resources:
+        limits:
+          cpus: "${CPU_LIMIT:-2.0}"
+          memory: ${MEMORY_LIMIT:-2g}
+        reservations:
+          memory: ${MEMORY_RESERVATION:-512m}
+
+    # 限制日志体积,避免 SSE 长跑写爆磁盘
+    logging:
+      driver: json-file
+      options:
+        max-size: "${LOG_MAX_SIZE:-20m}"
+        max-file: "${LOG_MAX_FILE:-5}"

@@ -5,3 +5,5 @@ dist/
 *.log
 .DS_Store
 .claude/settings.local.json
+docker-compose.override.yaml
+workspace/

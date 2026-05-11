@@ -1,0 +1,20 @@
+# 本地开发覆盖示例:
+#   cp docker-compose.override.yaml.example docker-compose.override.yaml
+# Compose 会自动合并 override 文件,部署机不放此文件即可走 image 路径。
+#
+# 用法:
+#   docker compose up -d --build     # 本地构建并启动
+#   docker compose build --no-cache  # 强制重建
+#
+# override 文件已在 .gitignore 中,不会污染部署。
+
+services:
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: code-review-agent:dev
+    # 本地开发挂源码,改完重启容器即可(生产 image 不带 tsx,需先 npm run build)
+    # volumes:
+    #   - ./src:/app/src:ro
+    #   - ./dist:/app/dist
