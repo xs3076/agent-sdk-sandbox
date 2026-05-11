@@ -1,5 +1,6 @@
 import type { Response } from "express";
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import { getBinaryPath } from "./binary";
 import type { ReviewRequest } from "./types";
 
 /**
@@ -55,8 +56,9 @@ export function buildSdkEnv(req: ReviewRequest): Record<string, string> {
  * 调用 Claude Agent SDK 进行代码评审,流式把 SDKMessage 推到 SSE 响应。
  *
  * 关键 options(均按官方 sdk.d.ts 0.2.138 文档):
- *  - 不传 pathToClaudeCodeExecutable:让 SDK 用 optionalDeps 装的 built-in
- *    binary(L1492 "Uses the built-in executable if not specified")。
+ *  - pathToClaudeCodeExecutable:启动期烟测过的绝对路径,跳过 SDK 内部 musl/glibc
+ *    自动 fallback——那条 fallback 链在 Alpine 上会拿 glibc 二进制 spawn,
+ *    kernel 找不到动态链接器后回 ENOENT,SDK 误报为"native binary not found"。
  *  - allowDangerouslySkipPermissions: true:bypassPermissions 的官方
  *    强制配套(L1512 "Must be set to true when using bypassPermissions")。
  *  - abortController:客户端断连时由调用方 abort,SDK 立刻停止并清理子进程
@@ -85,6 +87,7 @@ export async function runReview(
         settingSources: ["project"],
         env: buildSdkEnv(req),
         abortController,
+        pathToClaudeCodeExecutable: getBinaryPath(),
         stderr: (data: string) => console.error(`${tag} [sdk-stderr] ${data.trimEnd()}`),
       },
     });

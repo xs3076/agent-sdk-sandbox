@@ -1,5 +1,6 @@
 import express, { type Request, type Response } from "express";
 import { runReview } from "./agent";
+import { verifyBinary, setCachedBinary } from "./binary";
 import type { ReviewRequest } from "./types";
 
 const app = express();
@@ -88,6 +89,20 @@ app.post("/agent/review", async (req: Request, res: Response) => {
 });
 
 const port = Number(process.env.PORT) || 3000;
-app.listen(port, () => {
-  console.log(`[code-review-agent] listening on :${port}`);
+
+// 启动期烟测 claude 原生二进制:不让任何请求在二进制不可用的状态下到达 SDK。
+// 校验失败立刻 exit 1,让容器编排层重启或健康检查捕获,而不是把"native binary
+// not found"错误吐回客户端。
+async function main(): Promise<void> {
+  const check = await verifyBinary();
+  setCachedBinary(check);
+  console.log(`[boot] claude binary ok: ${check.path} (${check.version}) via ${check.package}`);
+  app.listen(port, () => {
+    console.log(`[code-review-agent] listening on :${port}`);
+  });
+}
+
+main().catch((err) => {
+  console.error("[boot] FATAL native binary check failed:", err);
+  process.exit(1);
 });

@@ -10,12 +10,7 @@ WORKDIR /app
 COPY package*.json ./
 # alpine 是 musl,SDK 的 optionalDependencies(8 个 platform 子包)中
 # detect-libc 会自动选 *-musl 子包并装上;不需要任何 --libc 强制。
-RUN npm install \
-    && ls -la /app/node_modules/@anthropic-ai/ \
-    && CLAUDE_BIN=$(find /app/node_modules/@anthropic-ai/ -name claude -type f -executable | head -1) \
-    && test -n "${CLAUDE_BIN}" \
-    && echo "✓ SDK native binary: ${CLAUDE_BIN}" \
-    && "${CLAUDE_BIN}" --version
+RUN npm install && ls -la /app/node_modules/@anthropic-ai/
 
 # 复制全部源码(包含 scripts/ 测试用)
 COPY tsconfig.json ./
@@ -25,6 +20,11 @@ COPY skills/ ./skills/
 
 # 编译
 RUN npm run build
+
+# 构建期烟测:复用运行期同一份 verifyBinary 逻辑,确保镜像里就能 spawn 起来。
+# 任何路径解析/libc 不匹配/权限缺失/动态链接器找不到都会让此步失败,
+# 阻止有问题的镜像被 push 出去。
+RUN node -e "require('./dist/binary').verifyBinary().then(c=>console.log('[image-smoke] '+c.path+' '+c.version+' '+c.package)).catch(e=>{console.error(e);process.exit(1)})"
 
 # 切非 root 运行。
 # claude CLI 拒绝以 root 使用 --dangerously-skip-permissions,SDK 的
