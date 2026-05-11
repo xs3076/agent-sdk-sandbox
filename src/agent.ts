@@ -3,19 +3,41 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import { getBinaryPath } from "./binary";
 import type { ReviewRequest } from "./types";
 
+// 只读工具白名单。任何能写 / 能执行任意代码的命令(awk/sed/xargs/python/node/
+// curl/tar/cp/mv/mkdir/rm 等)一律不放,从源头杜绝对仓库的修改与外发。
+// 网络读取只通过 WebFetch/WebSearch,不开 Bash(curl/wget)。
 const ALLOWED_TOOLS = [
+  // SDK 内置只读
   "Read",
   "Grep",
   "Glob",
+  "WebFetch",
+  "WebSearch",
+  // git 只读子命令
   "Bash(git log:*)",
   "Bash(git diff:*)",
   "Bash(git show:*)",
   "Bash(git blame:*)",
   "Bash(git status:*)",
+  // POSIX 只读
   "Bash(ls:*)",
   "Bash(cat:*)",
+  "Bash(head:*)",
+  "Bash(tail:*)",
   "Bash(wc:*)",
   "Bash(find:*)",
+  "Bash(diff:*)",
+  "Bash(file:*)",
+  "Bash(stat:*)",
+  "Bash(tree:*)",
+  "Bash(jq:*)",
+  // 环境信息
+  "Bash(pwd:*)",
+  "Bash(env:*)",
+  "Bash(date:*)",
+  "Bash(which:*)",
+  "Bash(type:*)",
+  "Bash(whoami:*)",
 ];
 
 function writeSse(res: Response, payload: unknown): void {

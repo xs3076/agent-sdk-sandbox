@@ -17,9 +17,10 @@
 ├── docker-compose.yaml     # 单服务部署,挂 ./workspace 到 /workspace
 ├── .env.example            # 所有可调环境变量样板
 ├── src/
-│   ├── server.ts           # Express 入口,2 个路由
+│   ├── server.ts           # Express 入口,3 个路由
 │   ├── agent.ts            # 调 SDK,组装 env,流式推 SSE
 │   ├── binary.ts           # 启动期解析 + 烟测 claude 原生 binary
+│   ├── clone.ts            # /agent/clone 实现:浅克隆 + 鉴权 + 路径校验
 │   └── types.ts            # ReviewRequest 类型
 └── skills/                 # SDK 通过 settingSources:["project"] 加载
 ```
@@ -95,7 +96,89 @@ Base URL:宿主机调用 `http://localhost:${HOST_PORT}`,同 compose 网络其�
 curl -i http://localhost:3000/agent/health
 ```
 
-### 3.2 POST `/agent/review`
+### 3.2 POST `/agent/clone`
+
+把仓库拉到 `/workspace/<name>`,**一次性 JSON**(非 SSE)。Clone 失败不会污染评审流。
+
+| 项 | 值 |
+|---|---|
+| Method | POST |
+| Content-Type | `application/json` |
+| Response | `200 application/json` |
+
+请求体(`src/clone.ts`):
+
+| 字段 | 类型 | 必填 | 默认 | 说明 |
+|---|---|---|---|---|
+| `repoUrl` | string | ✅ | — | **必须 `https://`**;ssh / git / file 一律拒绝 |
+| `workDir` | string | ✅ | — | 容器内目标路径,**必须** `/workspace` 子目录 |
+| `ref` | string | ❌ | 远端 HEAD | 分支 / tag / commit SHA 都行,内部统一 `git fetch <ref> + checkout --detach FETCH_HEAD` |
+| `depth` | number | ❌ | `50` | 浅克隆深度;`0` = 完整克隆 |
+| `authToken` | string | ❌ | — | 私有仓库 token(GitHub PAT 等);通过 URL userinfo 传给 git,clone 完成立刻把 origin 改回不含凭证的 URL,`.git/config` 不留密钥 |
+| `timeoutMs` | number | ❌ | `600000` | 每个 git 子命令超时,默认 10 分钟 |
+
+成功:
+
+```json
+{
+  "workDir": "/workspace/express",
+  "head": "5b27a9d0c93a8d3a2e5d8b1c4f6d7e8a9b0c1d2e",
+  "branch": "HEAD"   // detach 状态下是 "HEAD",带 ref 时是 ref 本身
+}
+```
+
+失败:
+
+```json
+{ "error": "clone_failed", "message": "...", "stderr": "..." }
+```
+
+`stderr` 是 git 子命令的原始 stderr,token 已被 `***` 替换。
+
+**克隆耗时参考**
+
+| 仓库 | `depth: 50`(默认)| `depth: 0`(完整)|
+|---|---|---|
+| Express(~50MB)| 1–3 s | 5–10 s |
+| 中型 ~1GB | 5–15 s | 30–90 s |
+| Linux kernel(~6GB)| 20–40 s | 30+ 分钟 |
+
+review 场景几乎都用默认 `depth: 50` 就够;需要更长历史传更大 `depth`,完整克隆传 `0`,大仓时连带把 `timeoutMs` 调高。
+
+**重复调用**
+
+如果 `workDir` 已经是一个 git 仓库:
+
+* origin 一致 → 执行 `git fetch + checkout --detach FETCH_HEAD`,等价于"切到新 ref"。
+* origin 不一致 → 报错,**绝不静默覆盖**用户数据。要换仓需调用方先自己清掉目录。
+
+#### 调用示例
+
+```bash
+# 公开仓库
+curl -X POST http://localhost:3000/agent/clone \
+  -H "Content-Type: application/json" \
+  -d '{
+    "repoUrl": "https://github.com/expressjs/express.git",
+    "workDir": "/workspace/express",
+    "ref": "master",
+    "depth": 50
+  }'
+
+# 私有仓库(GitHub PAT)
+curl -X POST http://localhost:3000/agent/clone \
+  -H "Content-Type: application/json" \
+  -d '{
+    "repoUrl": "https://github.com/your-org/private-repo.git",
+    "workDir": "/workspace/private-repo",
+    "ref": "main",
+    "authToken": "ghp_xxxxxxxx"
+  }'
+```
+
+调完拿到 200 之后再调 `/agent/review` 传同一个 `workDir`。
+
+### 3.3 POST `/agent/review`
 
 代码评审入口,**SSE 长连接**。
 
@@ -207,16 +290,26 @@ curl -N -X POST http://localhost:3000/agent/review \
 
 ## 4. 工具白名单
 
-只放行下列工具,其余一律拒绝(`src/agent.ts`):
+只放行**真·只读**的工具,其余一律拒绝(`src/agent.ts`):
 
-```
-Read, Grep, Glob,
-Bash(git log:*), Bash(git diff:*), Bash(git show:*),
-Bash(git blame:*), Bash(git status:*),
-Bash(ls:*), Bash(cat:*), Bash(wc:*), Bash(find:*)
-```
+| 类别 | 工具 |
+|---|---|
+| SDK 内置 | `Read`、`Grep`、`Glob`、`WebFetch`、`WebSearch` |
+| git 只读子命令 | `git log / diff / show / blame / status` |
+| POSIX 只读 | `ls / cat / head / tail / wc / find / diff / file / stat / tree / jq` |
+| 环境信息 | `pwd / env / date / which / type / whoami` |
 
-**显式不给** `Edit / Write / MultiEdit / NotebookEdit`,从源头杜绝对仓库的任何写入。`maxTurns: 50` 防 agent 失控烧钱。
+**明确不给**(能写或能 exec):
+
+| 不给 | 原因 |
+|---|---|
+| `Edit / Write / MultiEdit / NotebookEdit` | SDK 自带的写工具 |
+| `Bash(awk / sed / xargs:*)` | 都能 `>` 重定向写、`sed -i` 直接 in-place 改 |
+| `Bash(python / node / ruby / perl:*)` | 任意代码执行 |
+| `Bash(curl / wget:*)` | 能 `>` 写盘;要拉网络内容统一走 `WebFetch` |
+| `Bash(tar / unzip / cp / mv / mkdir / touch / rm:*)` | 文件系统写 |
+
+`maxTurns: 50` 防 agent 失控烧钱。
 
 ---
 
@@ -235,7 +328,17 @@ Dockerfile 在 `npm run build` 之后跑同一份 `verifyBinary()`,镜像 push �
 
 ## 6. 准备一个待评审仓库
 
-`workDir` 必须是容器内能访问的 git 仓库路径,通常宿主机克隆到 `./workspace/`:
+两种方式任选其一:
+
+**A. 调 `/agent/clone`(推荐)** —— 容器内 git 拉取,鉴权 / 浅克隆 / 路径越界保护一条龙(见 3.2)。
+
+```bash
+curl -X POST http://localhost:3000/agent/clone \
+  -H "Content-Type: application/json" \
+  -d '{"repoUrl":"https://github.com/expressjs/express.git","workDir":"/workspace/express"}'
+```
+
+**B. 宿主机预先克隆** —— 适合调度方已经有自己的 git 凭证 / 缓存 / 镜像加速基建:
 
 ```bash
 git clone --depth=50 https://github.com/expressjs/express.git ./workspace/express
@@ -255,7 +358,10 @@ git clone --depth=50 https://github.com/expressjs/express.git ./workspace/expres
 | 启动日志报 `native pkg ... not installed` / `--version failed` | `src/binary.ts` 烟测失败,带 `platform=`、`libc=`、`@anthropic-ai=...` 诊断 |
 | `event: error` 401 / invalid_api_key | `authToken` 写成了 `"Bearer xxx"`,只填 key 本体 |
 | `event: error` 找不到 model | `model` 拼错;智谱常见 `glm-4.6` / `glm-4.5` / `glm-4.5-air` / `glm-5.1`,**不是** `claude-*` |
-| `event: error` cwd / .git 不存在 | `workDir` 写了宿主机路径,应是 `/workspace/xxx` |
+| `event: error` cwd / .git 不存在 | `workDir` 写了宿主机路径,应是 `/workspace/xxx`;或者忘了先调 `/agent/clone` |
+| `clone_failed: ... different origin` | `workDir` 已经是别的仓库,自己先清理再 clone |
+| `clone_failed: ... only https://` | 只支持 `https://`,ssh / git / file 一律拒;给私有仓库走 `authToken` |
+| `clone_failed: ... timed out` | 大仓 + 慢网,把 `depth` 调小或把 `timeoutMs` 调大 |
 | 工具调用全被拒 | 越界使用了白名单外的命令,这是设计 |
 | 跑很久没动静 | 模型冷启动 / 大仓 grep;看日志确认是否在工具调用循环里 |
 | SSE 经过 nginx 被聚合输出 | 服务端已设 `X-Accel-Buffering: no`;nginx 端再加 `proxy_buffering off; proxy_cache off;` |

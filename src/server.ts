@@ -1,6 +1,7 @@
 import express, { type Request, type Response } from "express";
 import { runReview } from "./agent";
 import { verifyBinary, setCachedBinary } from "./binary";
+import { runClone, CloneError, type CloneRequest } from "./clone";
 import type { ReviewRequest } from "./types";
 
 const app = express();
@@ -15,6 +16,40 @@ process.on("uncaughtException", (err) => {
 
 app.get("/agent/health", (_req: Request, res: Response) => {
   res.status(200).type("text/plain").send("ok");
+});
+
+/**
+ * 把仓库拉到 /workspace/<name>。一次性 JSON,clone 失败不会污染评审 SSE 流。
+ * 路径越界、非 https URL、--开头的 ref 等都在 runClone 里被拒。
+ */
+app.post("/agent/clone", async (req: Request, res: Response) => {
+  const reqId = Math.random().toString(36).slice(2, 8);
+  const body = req.body as Partial<CloneRequest>;
+  console.log(`[req ${reqId}] POST /agent/clone url=${body.repoUrl} workDir=${body.workDir}`);
+
+  if (!body.repoUrl || !body.workDir) {
+    res.status(400).json({
+      error: "missing_required_field",
+      message: "repoUrl / workDir 必填",
+    });
+    return;
+  }
+
+  try {
+    const result = await runClone(body as CloneRequest, reqId);
+    res.status(200).json(result);
+  } catch (err) {
+    if (err instanceof CloneError) {
+      console.warn(`[req ${reqId}] clone failed: ${err.message}`);
+      res.status(400).json({ error: "clone_failed", message: err.message, stderr: err.stderr });
+    } else {
+      console.error(`[req ${reqId}] clone unexpected error:`, err);
+      res.status(500).json({
+        error: "internal",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
 });
 
 app.post("/agent/review", async (req: Request, res: Response) => {

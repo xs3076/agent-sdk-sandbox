@@ -28,3 +28,5 @@ export interface ReviewRequest {
   /** 小模型(SDK 用于快速操作) */
   smallModel?: string;
 }
+
+export type { CloneRequest, CloneResult } from "./clone";
