@@ -8,8 +8,7 @@
     "build": "tsc",
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.js",
-    "typecheck": "tsc --noEmit",
-    "test:sdk": "tsx scripts/test-sdk.ts"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "express": "^4.21.0",
