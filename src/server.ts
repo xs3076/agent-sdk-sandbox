@@ -1,7 +1,8 @@
+import * as fs from "node:fs";
 import express, { type Request, type Response } from "express";
 import { runReview } from "./agent";
 import { verifyBinary, setCachedBinary } from "./binary";
-import { runClone, CloneError, type CloneRequest } from "./clone";
+import { runClone, CloneError, validateWorkDir, type CloneRequest } from "./clone";
 import type { ReviewRequest } from "./types";
 
 const app = express();
@@ -65,6 +66,29 @@ app.post("/agent/review", async (req: Request, res: Response) => {
     });
     return;
   }
+
+  // workDir 必须在 /workspace 下、必须存在且是目录。
+  // 不挡这层时,SDK 把 cwd 不存在的 spawn 失败统一翻译成误导性的
+  // "Claude Code native binary not found",排错要兜好几圈才能定位到
+  // 调用方忘了先打 /agent/clone。直接 400 把语义还原。
+  let workDir: string;
+  try {
+    workDir = validateWorkDir(body.workDir);
+  } catch (err) {
+    res.status(400).json({
+      error: "invalid_workdir",
+      message: err instanceof Error ? err.message : String(err),
+    });
+    return;
+  }
+  if (!fs.existsSync(workDir) || !fs.statSync(workDir).isDirectory()) {
+    res.status(400).json({
+      error: "workdir_not_found",
+      message: `${workDir} does not exist or is not a directory (run /agent/clone first)`,
+    });
+    return;
+  }
+  body.workDir = workDir;
 
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");

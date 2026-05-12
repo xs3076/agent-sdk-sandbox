@@ -52,7 +52,7 @@ export class CloneError extends Error {
   }
 }
 
-function validateWorkDir(input: string | undefined): string {
+export function validateWorkDir(input: string | undefined): string {
   if (!input || !path.isAbsolute(input)) {
     throw new CloneError(`workDir must be an absolute path: ${input}`);
   }
