@@ -1,9 +1,8 @@
 import * as fs from "node:fs";
 import express, { type Request, type Response } from "express";
-import { runReview } from "./agent";
+import { runAgent } from "./agent";
 import { verifyBinary, setCachedBinary } from "./binary";
-import { runClone, CloneError, validateWorkDir, type CloneRequest } from "./clone";
-import type { ReviewRequest } from "./types";
+import type { AgentRunRequest } from "./types";
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
@@ -19,45 +18,11 @@ app.get("/agent/health", (_req: Request, res: Response) => {
   res.status(200).type("text/plain").send("ok");
 });
 
-/**
- * 把仓库拉到 /workspace/<name>。一次性 JSON,clone 失败不会污染评审 SSE 流。
- * 路径越界、非 https URL、--开头的 ref 等都在 runClone 里被拒。
- */
-app.post("/agent/clone", async (req: Request, res: Response) => {
+app.post("/agent/run", async (req: Request, res: Response) => {
   const reqId = Math.random().toString(36).slice(2, 8);
-  const body = req.body as Partial<CloneRequest>;
-  console.log(`[req ${reqId}] POST /agent/clone url=${body.repoUrl} workDir=${body.workDir}`);
+  const body = req.body as Partial<AgentRunRequest>;
 
-  if (!body.repoUrl || !body.workDir) {
-    res.status(400).json({
-      error: "missing_required_field",
-      message: "repoUrl / workDir 必填",
-    });
-    return;
-  }
-
-  try {
-    const result = await runClone(body as CloneRequest, reqId);
-    res.status(200).json(result);
-  } catch (err) {
-    if (err instanceof CloneError) {
-      console.warn(`[req ${reqId}] clone failed: ${err.message}`);
-      res.status(400).json({ error: "clone_failed", message: err.message, stderr: err.stderr });
-    } else {
-      console.error(`[req ${reqId}] clone unexpected error:`, err);
-      res.status(500).json({
-        error: "internal",
-        message: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
-});
-
-app.post("/agent/review", async (req: Request, res: Response) => {
-  const reqId = Math.random().toString(36).slice(2, 8);
-  const body = req.body as Partial<ReviewRequest>;
-
-  console.log(`[req ${reqId}] POST /agent/review model=${body.model} sessionId=${body.sessionId ?? "-"}`);
+  console.log(`[req ${reqId}] POST /agent/run model=${body.model} sessionId=${body.sessionId ?? "-"}`);
 
   if (!body.workDir || !body.prompt || !body.baseUrl || !body.authToken || !body.model) {
     res.status(400).json({
@@ -67,28 +32,15 @@ app.post("/agent/review", async (req: Request, res: Response) => {
     return;
   }
 
-  // workDir 必须在 /workspace 下、必须存在且是目录。
-  // 不挡这层时,SDK 把 cwd 不存在的 spawn 失败统一翻译成误导性的
-  // "Claude Code native binary not found",排错要兜好几圈才能定位到
-  // 调用方忘了先打 /agent/clone。直接 400 把语义还原。
-  let workDir: string;
-  try {
-    workDir = validateWorkDir(body.workDir);
-  } catch (err) {
-    res.status(400).json({
-      error: "invalid_workdir",
-      message: err instanceof Error ? err.message : String(err),
-    });
-    return;
-  }
-  if (!fs.existsSync(workDir) || !fs.statSync(workDir).isDirectory()) {
+  // workDir 必须存在且是目录。不挡这层时,SDK 把 cwd 不存在的 spawn 失败统一翻译成
+  // 误导性的 "Claude Code native binary not found",排错要兜好几圈。
+  if (!fs.existsSync(body.workDir) || !fs.statSync(body.workDir).isDirectory()) {
     res.status(400).json({
       error: "workdir_not_found",
-      message: `${workDir} does not exist or is not a directory (run /agent/clone first)`,
+      message: `${body.workDir} does not exist or is not a directory`,
     });
     return;
   }
-  body.workDir = workDir;
 
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
@@ -123,9 +75,9 @@ app.post("/agent/review", async (req: Request, res: Response) => {
   });
 
   try {
-    await runReview(body as ReviewRequest, res, reqId, abortController);
+    await runAgent(body as AgentRunRequest, res, reqId, abortController);
   } catch (err) {
-    console.error(`[req ${reqId}] runReview threw:`, err);
+    console.error(`[req ${reqId}] runAgent threw:`, err);
     if (!res.writableEnded) res.end();
   }
 });
@@ -137,7 +89,7 @@ async function main(): Promise<void> {
   setCachedBinary(check);
   console.log(`[boot] claude binary ok: ${check.path} (${check.version})`);
   app.listen(port, () => {
-    console.log(`[code-review-agent] listening on :${port}`);
+    console.log(`[agent-sdk-sandbox] listening on :${port}`);
   });
 }
 

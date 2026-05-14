@@ -1,50 +1,17 @@
 import type { Response } from "express";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { getBinaryPath } from "./binary";
-import type { ReviewRequest } from "./types";
+import type { AgentRunRequest } from "./types";
 
-// 只读工具白名单。任何能写 / 能执行任意代码的命令(awk/sed/xargs/python/node/
-// curl/tar/cp/mv/mkdir/rm 等)一律不放,从源头杜绝对仓库的修改与外发。
-// 网络读取只通过 WebFetch/WebSearch,不开 Bash(curl/wget)。
-const ALLOWED_TOOLS = [
-  // SDK 内置只读
-  "Read",
-  "Grep",
-  "Glob",
-  "WebFetch",
-  "WebSearch",
-  // git 只读子命令
-  "Bash(git log:*)",
-  "Bash(git diff:*)",
-  "Bash(git show:*)",
-  "Bash(git blame:*)",
-  "Bash(git status:*)",
-  // POSIX 只读
-  "Bash(ls:*)",
-  "Bash(cat:*)",
-  "Bash(head:*)",
-  "Bash(tail:*)",
-  "Bash(wc:*)",
-  "Bash(find:*)",
-  "Bash(diff:*)",
-  "Bash(file:*)",
-  "Bash(stat:*)",
-  "Bash(tree:*)",
-  "Bash(jq:*)",
-  // 环境信息
-  "Bash(pwd:*)",
-  "Bash(env:*)",
-  "Bash(date:*)",
-  "Bash(which:*)",
-  "Bash(type:*)",
-  "Bash(whoami:*)",
-];
+// 安全模型:本服务以 bypassPermissions 启动 SDK,所有工具调用都不会触发权限提示。
+// workDir 与 allowedTools 都不做内容性约束,沙箱边界由部署侧(容器/VM)负责。
+// 若要在应用层限制工具,改成 disallowedTools 或下调 permissionMode。
 
 function writeSse(res: Response, payload: unknown): void {
   res.write(`data: ${JSON.stringify(payload)}\n\n`);
 }
 
-export function buildSdkEnv(req: ReviewRequest): Record<string, string> {
+export function buildSdkEnv(req: AgentRunRequest): Record<string, string> {
   const model = req.model;
   const small = req.smallModel || req.model;
   return {
@@ -60,8 +27,8 @@ export function buildSdkEnv(req: ReviewRequest): Record<string, string> {
   };
 }
 
-export async function runReview(
-  req: ReviewRequest,
+export async function runAgent(
+  req: AgentRunRequest,
   res: Response,
   reqId: string,
   abortController: AbortController,
@@ -76,8 +43,8 @@ export async function runReview(
         resume: req.sessionId,
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
-        allowedTools: ALLOWED_TOOLS,
-        maxTurns: 50,
+        allowedTools: req.allowedTools,
+        maxTurns: req.maxTurns ?? 50,
         settingSources: ["project"],
         env: buildSdkEnv(req),
         abortController,
