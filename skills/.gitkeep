@@ -1,0 +1,2 @@
+# 项目级 skills 目录(SDK 经 settingSources:["project"] 加载)。
+# 放置 <name>/SKILL.md 即生效;此文件仅用于让空目录进入 git,可在加入首个 skill 后删除。

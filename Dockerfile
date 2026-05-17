@@ -1,6 +1,6 @@
 FROM node:20-alpine
 
-# alpine 用 apk;git 与 ca-certificates 是 SDK 工具白名单与 https 必备
+# alpine 用 apk;git 是 agent 工具(git 子命令)、ca-certificates 是 https 必备
 # bash 给我们的 RUN/healthcheck 与 docker exec 调试用(alpine 默认 ash)
 RUN apk add --no-cache git ca-certificates bash
 

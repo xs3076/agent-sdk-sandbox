@@ -1,7 +1,7 @@
 {
-  "name": "code-review-agent",
+  "name": "agent-sdk-sandbox",
   "version": "1.0.0",
-  "description": "代码评审 Node Agent 服务 - 唯一调用 Claude Agent SDK 的地方",
+  "description": "通用 Agent 沙箱 Node 服务 - 唯一调用 Claude Agent SDK 的地方",
   "main": "dist/server.js",
   "type": "commonjs",
   "scripts": {

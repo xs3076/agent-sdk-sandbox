@@ -2,8 +2,8 @@ services:
   agent:
     # 镜像由 GitHub Actions 自动构建并推送(.github/workflows/deploy.yml)
     # 部署机直接 pull,不在本地 build
-    image: ${IMAGE:-registry.cn-shanghai.aliyuncs.com/vagent/code-review-agent}:${IMAGE_TAG:-latest}
-    container_name: code-review-agent
+    image: ${IMAGE:-registry.cn-shanghai.aliyuncs.com/vagent/agent-sdk-sandbox}:${IMAGE_TAG:-latest}
+    container_name: agent-sdk-sandbox
     restart: unless-stopped
 
     # 端口与时区可调；其余 Provider 配置走请求体,不在这里注入
