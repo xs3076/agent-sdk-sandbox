@@ -14,7 +14,7 @@
 
 ```
 .
-├── Dockerfile              # node:20-alpine + git,编译 TS,运行 dist/server.js
+├── Dockerfile              # node:20-slim + git,编译 TS,运行 dist/server.js
 ├── docker-compose.yaml     # 单服务部署,挂 ./workspace 到 /workspace
 ├── .env.example            # 所有可调环境变量样板
 ├── src/
@@ -242,14 +242,14 @@ curl -N -X POST http://localhost:3000/agent/run \
 
 ---
 
-## 6. 原生 binary 解析(Alpine 关键)
+## 6. 原生 binary 解析(多架构镜像关键)
 
-Claude Agent SDK 的原生 binary 通过 `optionalDependencies` 按平台子包发布:`@anthropic-ai/claude-agent-sdk-{platform}-{arch}[-musl]/claude`。SDK 内部的 `require.resolve` 仅验文件存在,不验 ELF 动态链接器是否可用——musl 路径解析成功后 spawn 一个 glibc 二进制(或反之),kernel 回 ENOENT 被 SDK 翻译成 "native binary not found",和"包没装"完全混在一起。
+Claude Agent SDK 的原生 binary 通过 `optionalDependencies` 按平台子包发布:`@anthropic-ai/claude-agent-sdk-{platform}-{arch}/claude`(部署镜像为 debian-slim/glibc,无 `-musl` 子包)。SDK 内部的 `require.resolve` 按顺序探测多个平台子包且仅验文件存在,不验 ELF 是否可在本机执行——多架构构建(amd64/arm64)里一旦装错 arch,它会解析出另一架构的二进制,spawn 后 kernel 回 ENOENT 被 SDK 翻译成 "native binary not found",和"包没装"完全混在一起。
 
 `src/binary.ts` 做两件事:
 
-1. 用 `process.report` 的 `glibcVersionRuntime` 判定 musl/glibc,**只**解析当前平台对应那一个子包,任何 fallback 都视作错误。
-2. 启动时 `statSync` + 真实 spawn `claude --version` 烟测,失败立刻 `exit 1` 并打印 `platform/libc/@anthropic-ai 目录` 诊断。`getBinaryPath()` 在未通过烟测前抛错,防止任何请求在未校验状态下到达 SDK。
+1. 按 `platform/arch` **只**解析当前平台对应那一个子包,不走 SDK 的兜底探测链,任何 fallback 都视作错误。
+2. 启动时 `statSync` + 真实 spawn `claude --version` 烟测,失败立刻 `exit 1` 并打印 `platform/arch/@anthropic-ai 目录` 诊断。`getBinaryPath()` 在未通过烟测前抛错,防止任何请求在未校验状态下到达 SDK。
 
 Dockerfile 在 `npm run build` 之后跑**同一份** `verifyBinary()`,binary 不可用的镜像构建期就被拦下,push 不出去。
 

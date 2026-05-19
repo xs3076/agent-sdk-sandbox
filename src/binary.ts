@@ -6,27 +6,17 @@ import * as path from "node:path";
 const execFileP = promisify(execFile);
 
 /**
- * 在 linux 上区分 glibc / musl。Node 自带的 process.report 在 glibc 系统会暴露
- * glibcVersionRuntime;musl(Alpine)系统该字段为空字符串或缺失。这是 detect-libc
- * 之外、无需额外依赖的官方判定方式。
- */
-function detectLinuxLibc(): "musl" | "glibc" {
-  type Header = { glibcVersionRuntime?: string };
-  const header = (process.report?.getReport() as { header?: Header } | undefined)?.header;
-  return header?.glibcVersionRuntime ? "glibc" : "musl";
-}
-
-/**
  * 当前 Node 进程对应的 SDK 原生子包名(与 SDK 内部 F5() 解析逻辑一致)。
- *  - linux:           @anthropic-ai/claude-agent-sdk-linux-${arch}[-musl]
+ *  - linux:           @anthropic-ai/claude-agent-sdk-linux-${arch}
  *  - darwin / win32:  @anthropic-ai/claude-agent-sdk-${platform}-${arch}
+ *
+ * 部署镜像为 debian-slim(glibc),不存在 musl 子包;本地 darwin 同理无 libc 分支。
+ * 故不再做 glibc/musl 判定,linux 一律取无后缀的 glibc 子包。
  */
 export function nativePackageName(): string {
   const { platform, arch } = process;
   if (platform === "linux") {
-    return detectLinuxLibc() === "musl"
-      ? `@anthropic-ai/claude-agent-sdk-linux-${arch}-musl`
-      : `@anthropic-ai/claude-agent-sdk-linux-${arch}`;
+    return `@anthropic-ai/claude-agent-sdk-linux-${arch}`;
   }
   return `@anthropic-ai/claude-agent-sdk-${platform}-${arch}`;
 }
@@ -34,9 +24,10 @@ export function nativePackageName(): string {
 /**
  * 解析当前平台对应的 claude 可执行文件绝对路径。
  *
- * 不走 SDK 的 require.resolve 兜底链(musl 失败回落 glibc),那条链在 Alpine 上
- * 会让一个 glibc 二进制被 spawn,kernel 找不到动态链接器后回 ENOENT,SDK 误报
- * "native binary not found"。这里强制只用当前平台的子包,任何不匹配都立即抛错。
+ * 不走 SDK 的 require.resolve 兜底链:那条链按顺序探测多个平台子包,多架构镜像
+ * (amd64/arm64)里一旦 optionalDependencies 装错 arch,它会解析出另一架构的二进制,
+ * spawn 后 kernel 回 ENOENT 被 SDK 误报成 "native binary not found",和"包没装"
+ * 完全混在一起。这里强制只用当前平台的子包,任何不匹配都立即抛错。
  */
 export function resolveBinaryPath(): string {
   const pkg = nativePackageName();
@@ -88,7 +79,7 @@ export async function verifyBinary(timeoutMs = 8000): Promise<BinaryCheck> {
     return { path: binPath, version: stdout.trim(), package: pkg };
   } catch (err) {
     throw new Error(
-      `${binPath} --version failed (likely libc/arch mismatch on this host). ${diagnostics()}`,
+      `${binPath} --version failed (likely arch mismatch on this host). ${diagnostics()}`,
       { cause: err as Error },
     );
   }
@@ -99,7 +90,6 @@ function diagnostics(): string {
     `platform=${process.platform}/${process.arch}`,
     `node=${process.version}`,
   ];
-  if (process.platform === "linux") parts.push(`libc=${detectLinuxLibc()}`);
   try {
     const dir = path.resolve(__dirname, "..", "node_modules", "@anthropic-ai");
     const entries = fs.readdirSync(dir);
