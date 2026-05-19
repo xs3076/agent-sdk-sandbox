@@ -7,11 +7,15 @@ import type { AgentRunRequest } from "./types";
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
+// 进程进入未定义状态后不继续服务:记录后退出,由 compose 的 restart 策略干净重启。
+// 正常路径(runAgent / boot)已各自 try/catch,走到这里说明确实坏了。
 process.on("unhandledRejection", (reason) => {
   console.error("[fatal] unhandledRejection:", reason);
+  process.exit(1);
 });
 process.on("uncaughtException", (err) => {
   console.error("[fatal] uncaughtException:", err);
+  process.exit(1);
 });
 
 app.get("/agent/health", (_req: Request, res: Response) => {

@@ -6,19 +6,20 @@ import * as path from "node:path";
 const execFileP = promisify(execFile);
 
 /**
- * 当前 Node 进程对应的 SDK 原生子包名(与 SDK 内部 F5() 解析逻辑一致)。
- *  - linux:           @anthropic-ai/claude-agent-sdk-linux-${arch}
- *  - darwin / win32:  @anthropic-ai/claude-agent-sdk-${platform}-${arch}
+ * 当前 Node 进程对应的 SDK 原生子包名。
+ *  - linux  (debian-slim 部署):@anthropic-ai/claude-agent-sdk-linux-${arch}
+ *  - darwin (本地开发):        @anthropic-ai/claude-agent-sdk-darwin-${arch}
  *
- * 部署镜像为 debian-slim(glibc),不存在 musl 子包;本地 darwin 同理无 libc 分支。
- * 故不再做 glibc/musl 判定,linux 一律取无后缀的 glibc 子包。
+ * 只支持这两个真实运行目标。部署镜像为 debian-slim(glibc),不存在 musl 子包,
+ * 故不做 glibc/musl 判定。其它平台直接抛错——不拼一个永远装不上的包名再让
+ * 下游解析失败时给出误导信息。
  */
 export function nativePackageName(): string {
   const { platform, arch } = process;
-  if (platform === "linux") {
-    return `@anthropic-ai/claude-agent-sdk-linux-${arch}`;
+  if (platform === "linux" || platform === "darwin") {
+    return `@anthropic-ai/claude-agent-sdk-${platform}-${arch}`;
   }
-  return `@anthropic-ai/claude-agent-sdk-${platform}-${arch}`;
+  throw new Error(`unsupported platform ${platform}/${arch}; only linux & darwin are supported`);
 }
 
 /**
@@ -31,10 +32,9 @@ export function nativePackageName(): string {
  */
 export function resolveBinaryPath(): string {
   const pkg = nativePackageName();
-  const ext = process.platform === "win32" ? ".exe" : "";
   // require.resolve('pkg/package.json') 在 CJS 下直接可用,不依赖 import.meta。
   const pkgJsonPath = require.resolve(`${pkg}/package.json`);
-  return path.join(path.dirname(pkgJsonPath), `claude${ext}`);
+  return path.join(path.dirname(pkgJsonPath), "claude");
 }
 
 export interface BinaryCheck {
