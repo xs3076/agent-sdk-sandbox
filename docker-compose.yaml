@@ -18,8 +18,12 @@ services:
 
     # 克隆的仓库放宿主机目录,方便排错与跨容器复用缓存
     # 容器内路径必须是 /workspace —— 与 Dockerfile 一致
+    # skills 走宿主挂载到容器内 user 级路径:SDK 只认 ~/.claude/skills/ 与 cwd/.claude/skills/
+    # 挂到 user 级位置后,无论请求传什么 workDir,该目录下的 skill 都全局可见
+    # 后期新增/改 skill 直接编辑 ${SKILLS_DIR},重启容器即生效,不必重建镜像
     volumes:
       - ${WORKSPACE_DIR:-./workspace}:/workspace
+      - ${SKILLS_DIR:-./skills}:/home/node/.claude/skills:ro
 
     # 健康检查走业务真实路径,Spring Boot 上游也是轮询这个
     healthcheck:

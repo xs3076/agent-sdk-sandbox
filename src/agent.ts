@@ -45,7 +45,10 @@ export async function runAgent(
         allowDangerouslySkipPermissions: true,
         allowedTools: req.allowedTools,
         maxTurns: req.maxTurns ?? 50,
-        settingSources: ["project"],
+        // user: 加载 ~/.claude/skills(全局 skill,挂载点);project: 加载 cwd/.claude/(CLAUDE.md + 项目 skill)
+        settingSources: ["user", "project"],
+        // 显式开启所有 skill,避免依赖 CLI 隐式默认
+        skills: "all",
         env: buildSdkEnv(req),
         abortController,
         pathToClaudeCodeExecutable: getBinaryPath(),

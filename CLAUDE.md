@@ -50,7 +50,7 @@ docker compose up -d --build                       # 本地现场构建
 - **原生 binary 解析(多架构镜像关键)**:不走 SDK 的 `require.resolve` 兜底探测链——多架构构建(amd64/arm64)里一旦 optionalDependencies 装错 arch,它会解析出另一架构的二进制,spawn 后 kernel ENOENT,被 SDK 误报成 "native binary not found"。`binary.ts` 按 `platform/arch` **只**解析当前平台子包,任何回落即抛错(部署镜像已是 debian-slim/glibc,不再有 musl 分支)。启动时 `verifyBinary()` 必须先于 `app.listen()`;`getBinaryPath()` 在未缓存时抛错,防止请求在未校验态到达 SDK。Dockerfile 在 `npm run build` 后跑**同一份** `verifyBinary()`,binary 不可用的镜像构建期就被拦下。
 - **`workDir` 预检**:`server.ts` 在进 SDK 前显式 `existsSync`/`isDirectory`——否则 SDK 把"cwd 不存在的 spawn 失败"也翻译成那条误导性的 "native binary not found"。
 - **SSE 客户端断连**:用 `res.on('close')` 且 `!res.writableEnded` 触发 `abortController.abort()`,**不要**用 `req.on('close')`(Node 16+ 语义是"可读流关闭",body 读完就触发,会让每个请求一进来就 abort 自己)。
-- **`settingSources: ["project"]`**:SDK 从项目目录加载 `skills/`;Dockerfile 已 `COPY skills/`。目前 `skills/` 为空,仅 `.gitkeep` 占位(让空目录进 git,否则 CI 全新 checkout 时 `skills/` 不存在会让 `COPY skills/` 构建失败)。新增 skill 放 `skills/<name>/SKILL.md`。
+- **Skills 加载路径(易踩坑)**:SDK / claude binary 只扫两条路径——`~/.claude/skills/<name>/SKILL.md`(user 级,全局)和 `<cwd>/.claude/skills/<name>/SKILL.md`(project 级,跟 workDir 走)。仓库根目录裸放 `skills/` 是**不会**被加载的。本项目把宿主机 `./skills` 挂载到容器内 `/home/node/.claude/skills`(见 `docker-compose.yaml`),走 user 级路径——这样 skill 跟容器走、与请求传入的 `workDir` 解耦,后期加 skill 不必重建镜像,改完重启容器即生效。`agent.ts` 显式 `settingSources: ["user", "project"]` + `skills: "all"`,不依赖 CLI 隐式默认。新增 skill:在宿主 `./skills/<name>/SKILL.md` 写好即可。
 
 ## 部署链路上的坑
 

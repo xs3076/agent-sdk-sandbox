@@ -22,7 +22,7 @@
 │   ├── agent.ts            # 调 SDK query(),组装 env,流式推 SSE
 │   ├── binary.ts           # 启动期解析 + 烟测 claude 原生 binary
 │   └── types.ts            # AgentRunRequest 类型
-└── skills/                 # SDK 通过 settingSources:["project"] 加载(目前为空,放 <name>/SKILL.md 即生效)
+└── skills/                 # 宿主目录,被 compose 挂到容器 /home/node/.claude/skills(SDK 仅扫 ~/.claude/skills 与 <cwd>/.claude/skills,放 <name>/SKILL.md 即生效)
 ```
 
 ---

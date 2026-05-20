@@ -13,10 +13,11 @@ COPY package*.json ./
 # debian 是 glibc,SDK 的 optionalDependencies 选 linux-${arch}(无 -musl 后缀)子包。
 RUN npm install
 
-# 源码 + skills(SDK 通过 settingSources:["project"] 加载)
+# 源码;skills 不再 COPY 进镜像,改由 docker-compose 挂载到 /home/node/.claude/skills。
+# 原因:SDK / claude binary 只扫 ~/.claude/skills 与 <cwd>/.claude/skills 两条路径,
+#       原本 COPY 到 /app/skills 的位置根本不会被加载。
 COPY tsconfig.json ./
 COPY src/ ./src/
-COPY skills/ ./skills/
 
 # 编译
 RUN npm run build
@@ -29,7 +30,9 @@ RUN node -e "require('./dist/binary').verifyBinary().then(c=>console.log('[image
 # 切非 root:claude CLI 拒绝以 root 用 --dangerously-skip-permissions,
 # bypassPermissions 会立刻 exit 非零被 SDK 翻译成 "native binary not found"。
 # node:20-slim 已自带 uid=1000 的 node 用户,直接复用。
-RUN mkdir -p /workspace && chown -R node:node /workspace /app
+# 预创建 /home/node/.claude/skills 作为挂载点,免得 compose 首次起容器时点目录不存在。
+RUN mkdir -p /workspace /home/node/.claude/skills \
+  && chown -R node:node /workspace /app /home/node/.claude
 USER node
 
 EXPOSE 3000
