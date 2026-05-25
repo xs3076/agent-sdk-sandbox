@@ -1,9 +1,11 @@
 FROM node:20-slim
 
-# debian-slim 用 apt;git 是 agent 工具(git 子命令)、ca-certificates 是 https 必备。
+# debian-slim 用 apt;git 是 agent 工具(git 子命令)、ca-certificates 是 https 必备、
+# gosu 用于 entrypoint 在 root 下修正挂载点属主后降权到 node 跑业务进程
+# (claude CLI 拒绝在 root 下用 --dangerously-skip-permissions)。
 # slim 自带 bash,RUN/healthcheck/docker exec 调试无需额外装。
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends git ca-certificates \
+  && apt-get install -y --no-install-recommends git ca-certificates gosu \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -27,13 +29,18 @@ RUN npm run build
 # 动态链接器找不到都会让此步失败,阻止有问题的镜像被 push 出去。
 RUN node -e "require('./dist/binary').verifyBinary().then(c=>console.log('[image-smoke] '+c.path+' '+c.version+' '+c.package)).catch(e=>{console.error(e);process.exit(1)})"
 
-# 切非 root:claude CLI 拒绝以 root 用 --dangerously-skip-permissions,
-# bypassPermissions 会立刻 exit 非零被 SDK 翻译成 "native binary not found"。
-# node:20-slim 已自带 uid=1000 的 node 用户,直接复用。
-# 预创建 /home/node/.claude/skills 作为挂载点,免得 compose 首次起容器时点目录不存在。
+# 预创建 /workspace 与 /home/node/.claude/skills 作为挂载点,
+# 免得 compose 首次起容器时点目录不存在。镜像层属主先设成 node:node,
+# bind mount 覆盖后再由 entrypoint 按运行时实际情况修正。
 RUN mkdir -p /workspace /home/node/.claude/skills \
   && chown -R node:node /workspace /app /home/node/.claude
-USER node
+
+# 容器以 root 启动 → entrypoint 修挂载点属主 → gosu 降权到 node 跑业务进程。
+# 不再用 USER node:PID 1 必须是 root 才有权 chown bind mount 进来的 /workspace。
+# claude CLI 仍然只在 node 用户下跑(业务进程经 gosu 切过去),--dangerously-skip-permissions 通过。
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 EXPOSE 3000
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["node", "dist/server.js"]

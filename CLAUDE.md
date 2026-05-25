@@ -58,4 +58,6 @@ docker compose up -d --build                       # 本地现场构建
 
 ## 部署链路上的坑
 
-CI(`.github/workflows/deploy.yml`,push 到 `main` 触发)构建多架构镜像并推到 `registry.cn-shanghai.aliyuncs.com/vagent/agent-sdk-sandbox`,`docker-compose.yaml` / `.env.example` 默认拉同名镜像(已对齐)。容器内工作目录固定 `/workspace`(Dockerfile 与 compose 挂载点必须一致),容器以非 root `node` 用户运行(root 下 `bypassPermissions` 会被 claude CLI 拒绝并误报 binary not found)。
+CI(`.github/workflows/deploy.yml`,push 到 `main` 触发)构建多架构镜像并推到 `registry.cn-shanghai.aliyuncs.com/vagent/agent-sdk-sandbox`,`docker-compose.yaml` / `.env.example` 默认拉同名镜像(已对齐)。容器内工作目录固定 `/workspace`(Dockerfile 与 compose 挂载点必须一致)。
+
+**容器用户模型**:PID 1 以 root 启动 → `docker-entrypoint.sh` 把 bind mount 进来的 `/workspace` 里属主不是 1000 的项 chown 成 `node:node` → `gosu` 降权到 node(uid=1000) 跑 `node dist/server.js`。两条硬约束:(a) claude CLI 拒绝在 root 下用 `--dangerously-skip-permissions`,业务进程必须以 node 跑;(b) bind mount 进来的 `/workspace` 属主取决于宿主机,常见跟容器内 node 对不上、写 `git-change-report.json` 之类直接 EACCES。把 chown 搬进容器入口后,部署机零配置——不需要每次 `docker compose pull` 后再 `chown` 宿主机 workspace。entrypoint 用 `find /workspace ! -uid 1000` 增量修,属主全对时近乎 no-op。
