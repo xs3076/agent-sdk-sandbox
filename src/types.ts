@@ -31,9 +31,13 @@ export interface AgentRunRequest {
   /**
    * 透传给 SDK 的 allowedTools。
    * 注意:当前 runAgent 以 bypassPermissions + allowDangerouslySkipPermissions 启动,
-   * SDK 会跳过所有工具的权限确认,allowedTools 不构成"工具白名单"安全边界——
-   * 真正的隔离依赖部署侧的沙箱(容器/VM)。如需限制工具,改用 disallowedTools
-   * 或下调 permissionMode。
+   * SDK 会跳过绝大多数工具的权限确认,allowedTools 不构成"工具白名单"安全边界——
+   * 真正的隔离依赖部署侧的沙箱(容器/VM)。
+   *
+   * 但服务侧硬编码了一条 PreToolUse hook(见 agent.ts 的 denyGitWriteHook),
+   * 会强制拒绝改写仓库历史/远端的 git 子命令
+   * (commit/commit-tree/push/tag/update-ref/fast-import/replace/notes),
+   * 该规则不受 allowedTools / disallowedTools / permissionMode 影响。
    */
   allowedTools?: string[];
   /** 最大轮数,默认 50 */

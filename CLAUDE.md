@@ -39,7 +39,11 @@ docker compose up -d --build                       # 本地现场构建
 
 ### 安全模型(已变更,务必注意)
 
-`runAgent` 以 `permissionMode: "bypassPermissions"` + `allowDangerouslySkipPermissions: true` 启动 SDK。**`allowedTools` 只是从请求体透传,不构成安全边界**——它不再是"只读白名单"。真正的隔离完全依赖部署侧沙箱(容器/VM)。若要在应用层收紧,应改用 `disallowedTools` 或下调 `permissionMode`(见 `src/agent.ts` 顶部注释与 `types.ts` 的 `allowedTools` 文档)。
+`runAgent` 以 `permissionMode: "bypassPermissions"` + `allowDangerouslySkipPermissions: true` 启动 SDK。**`allowedTools` 只是从请求体透传,不构成安全边界**——它不再是"只读白名单"。绝大多数工具(Edit/Write/Bash 大多数命令)直通,真正的隔离依赖部署侧沙箱(容器/VM)。
+
+在此之上,`src/agent.ts` 里的 **`denyGitWriteHook`** 用 PreToolUse hook 强制拦截改写仓库历史/远端的 git 子命令(`commit` / `commit-tree` / `push` / `tag` / `update-ref` / `fast-import` / `replace` / `notes`)。SDK 类型注释明确"PreToolUse hook denies bypass canUseTool"——hook 的 `permissionDecision: "deny"` 能覆盖 `bypassPermissions`,比 `disallowedTools` 更硬,且 `permissionDecisionReason` 会回到 LLM,阻止它换种写法反复重试。只动工作区/index 的 `git add` / `checkout` / `reset` / `stash` 不拦——agent 干活经常要用且不会让代码"提交出去"。
+
+若要扩展应用层限制,继续走 hook 路径(单点可控、reason 能反馈给 LLM),不要回退到 `disallowedTools` 或 `permissionMode` 降级——后者在 SSE 场景下会卡住等不到的交互确认。
 
 ### Provider 只走请求体,绝不进镜像
 
