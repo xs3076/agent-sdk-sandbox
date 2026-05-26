@@ -60,4 +60,6 @@ docker compose up -d --build                       # 本地现场构建
 
 CI(`.github/workflows/deploy.yml`,push 到 `main` 触发)构建多架构镜像并推到 `registry.cn-shanghai.aliyuncs.com/vagent/agent-sdk-sandbox`,`docker-compose.yaml` / `.env.example` 默认拉同名镜像(已对齐)。容器内工作目录固定 `/workspace`(Dockerfile 与 compose 挂载点必须一致)。
 
-**容器用户模型**:PID 1 以 root 启动 → `docker-entrypoint.sh` 把 bind mount 进来的 `/workspace` 里属主不是 1000 的项 chown 成 `node:node` → `gosu` 降权到 node(uid=1000) 跑 `node dist/server.js`。两条硬约束:(a) claude CLI 拒绝在 root 下用 `--dangerously-skip-permissions`,业务进程必须以 node 跑;(b) bind mount 进来的 `/workspace` 属主取决于宿主机,常见跟容器内 node 对不上、写 `git-change-report.json` 之类直接 EACCES。把 chown 搬进容器入口后,部署机零配置——不需要每次 `docker compose pull` 后再 `chown` 宿主机 workspace。entrypoint 用 `find /workspace ! -uid 1000` 增量修,属主全对时近乎 no-op。
+**容器用户模型**:PID 1 以 root 启动 → `docker-entrypoint.sh` 把 bind mount 进来的 `/workspace` 里属主不是 1000 的项 chown 成 `node:node`,**并 fork 一个 5s 间隔的后台守护循环持续做这件事**,然后 `gosu` 降权到 node(uid=1000) 跑 `node dist/server.js`。两条硬约束:(a) claude CLI 拒绝在 root 下用 `--dangerously-skip-permissions`,业务进程必须以 node 跑;(b) bind mount 进来的 `/workspace` 属主取决于宿主机,常见跟容器内 node 对不上、写 `git-change-report.json` 之类直接 EACCES。
+
+守护循环不能省——典型工作流是运维在宿主机直接 `git clone` 仓库到 `./workspace/<name>`,这批文件是**容器起来之后**才落进 bind mount 的,启动时那一次 chown 漏不到。fork 时机在 `exec gosu` 之前,子进程从 root 继承到 chown 权限;exec 之后 PID 1 替换为 node 进程,已 fork 的 sh 子进程不受影响。`find -xdev ! -uid 1000` 只动错属主项,属主全对时近乎 no-op;容器销毁时 namespace 内进程被 docker 统一清,守护循环跟着退。结果:部署机彻底零配置,宿主机随便往 `/workspace` 里 clone/pull,容器自动收敛。
